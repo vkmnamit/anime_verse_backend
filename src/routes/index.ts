@@ -9,6 +9,8 @@ import battleRoutes from './battle.routes'
 import watchlistRoutes from './watchlist.routes'
 import userRoutes from './user.routes'
 import notificationRoutes from './notification.routes'
+import postRoutes from './post.routes'
+import communityRoutes from './community.routes'
 
 const router = Router()
 
@@ -21,5 +23,8 @@ router.use('/battles', battleRoutes)
 router.use('/watchlist', watchlistRoutes)
 router.use('/users', userRoutes)
 router.use('/notifications', notificationRoutes)
+router.use('/posts', postRoutes)
+router.use('/community', communityRoutes)
+router.use('/communities', communityRoutes) // Plural alias for REST consistency
 
 export default router
