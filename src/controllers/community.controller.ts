@@ -17,17 +17,19 @@ export async function listCommunities(req: Request, res: Response, next: NextFun
             { id: 5, name: "Naruto", slug: "r/Naruto", member_count: 920000 }
         ];
 
+        console.log(`📡 [listCommunities] Fetching communities...`);
         let communities;
         try {
+            // Very short timeout for DB so we can respond instantly to the UI if it's slow
             const { data, error } = await Promise.race([
                 supabase.from('communities').select('*').order('member_count', { ascending: false }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 500))
             ]) as any;
 
             if (error) throw error;
             communities = data || [];
         } catch (err) {
-            console.warn("[listCommunities] Database failed, using mock data");
+            console.warn("⚠️  [listCommunities] Database slow or failed, using mock data instantly");
             communities = mockCommunities;
         }
 

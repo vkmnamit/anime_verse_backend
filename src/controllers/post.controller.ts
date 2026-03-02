@@ -74,35 +74,15 @@ export async function getMyLikedPosts(req: Request, res: Response, next: NextFun
  */
 export async function getPosts(req: Request, res: Response, next: NextFunction) {
     try {
-        const { community, slug } = req.query
+        const { community, slug } = req.query;
         let query = supabase
             .from('community_posts')
             .select('*')
-            .order('created_at', { ascending: false })
+            .order('created_at', { ascending: false });
 
         if (community) {
-            query = query.eq('community_id', community)
+            query = query.eq('community_id', community);
         }
-        if (slug) {
-            const slugStr = String(slug);
-            // Try matching by community_name first (e.g. 'r/OnePiece')
-            const formattedSlug = slugStr.startsWith('r/') ? slugStr : `r/${slugStr}`;
-
-            // First, let's try to find the community to get its ID, as many tables link by ID
-            const { data: comm } = await supabase
-                .from('communities')
-                .select('id')
-                .or(`slug.eq.${slugStr},slug.eq.${formattedSlug}`)
-                .maybeSingle();
-
-            if (comm) {
-                query = query.or(`community_id.eq.${comm.id},community_name.eq.${formattedSlug}`);
-            } else {
-                query = query.eq('community_name', formattedSlug);
-            }
-        }
-
-        console.log(`[getPosts] Starting query for slug: ${slug}`);
 
         // Define mock data as fallback
         const mockPosts = [
@@ -143,22 +123,42 @@ export async function getPosts(req: Request, res: Response, next: NextFunction) 
 
         let posts;
         try {
-            // Promise.race to handle timeout
+            console.log(`📡 [getPosts] Querying posts for slug: ${slug || 'HOME'}`);
+
+            // Protect against slow community ID lookup
+            let resolvedSlugQuery = query;
+            if (slug) {
+                const slugStr = String(slug);
+                const formattedSlug = slugStr.startsWith('r/') ? slugStr : `r/${slugStr}`;
+
+                const commRes = await Promise.race([
+                    supabase.from('communities').select('id').or(`slug.eq.${slugStr},slug.eq.${formattedSlug}`).maybeSingle(),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 500))
+                ]) as any;
+
+                if (commRes.data) {
+                    resolvedSlugQuery = resolvedSlugQuery.or(`community_id.eq.${commRes.data.id},community_name.eq.${formattedSlug}`);
+                } else {
+                    resolvedSlugQuery = resolvedSlugQuery.eq('community_name', formattedSlug);
+                }
+            }
+
+            // Main posts query with timeout
             const { data, error } = await Promise.race([
-                query,
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+                resolvedSlugQuery,
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 500))
             ]) as any;
 
             if (error) throw error;
-            posts = data;
+            posts = data || [];
         } catch (err) {
-            console.warn("[getPosts] Database failed or timed out, returning mock data", err);
+            console.warn("⚠️  [getPosts] Database slow or failed, using mock data instantly");
             posts = mockPosts;
         }
 
         console.log(`[getPosts] Returning ${posts.length} posts`);
-        return response.success(res, posts)
+        return response.success(res, posts);
     } catch (err) {
-        return next(err)
+        return next(err);
     }
 }
