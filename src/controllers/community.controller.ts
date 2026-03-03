@@ -4,6 +4,55 @@ import { getServiceSupabase } from '../config/supabase.config'
 const supabase = getServiceSupabase()
 
 /**
+ * POST /api/v1/community
+ * Create a new community
+ */
+export async function createCommunity(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = req.user?.id
+        if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const { name, description } = req.body
+
+        if (!name || name.trim().length === 0) {
+            return response.failure(res, 400, 'validation', 'Community name is required')
+        }
+
+        const slug = `r/${name.trim().replace(/\s+/g, '')}`
+
+        // Check for duplicate slug
+        try {
+            const { data: existing } = await supabase
+                .from('communities')
+                .select('id')
+                .eq('slug', slug)
+                .maybeSingle()
+
+            if (existing) {
+                return response.failure(res, 409, 'conflict', 'A community with this name already exists')
+            }
+        } catch { }
+
+        const { data, error } = await supabase
+            .from('communities')
+            .insert({
+                name: name.trim(),
+                slug,
+                description: description?.trim() || `Welcome to ${slug}!`,
+                member_count: 1,
+                created_by: userId,
+            })
+            .select()
+            .single()
+
+        if (error) throw error
+        return response.created(res, data)
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
  * GET /api/v1/communities
  * List all communities
  */

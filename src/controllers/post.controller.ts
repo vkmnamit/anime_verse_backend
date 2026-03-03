@@ -4,6 +4,146 @@ import { getServiceSupabase } from '../config/supabase.config'
 const supabase = getServiceSupabase()
 
 /**
+ * POST /api/v1/posts
+ * Create a new community post
+ */
+export async function createPost(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = req.user?.id
+        if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const { title, content, image_url, community_id, community_name, is_spoiler, meta_tag } = req.body
+
+        if (!title || title.trim().length === 0) {
+            return response.failure(res, 400, 'validation', 'Title is required')
+        }
+
+        const postData: any = {
+            title: title.trim(),
+            content: content?.trim() || null,
+            image_url: image_url || null,
+            community_id: community_id || null,
+            community_name: community_name || null,
+            is_spoiler: is_spoiler || false,
+            meta_tag: meta_tag || null,
+            user_id: userId,
+            votes: 0,
+            comment_count: 0,
+        }
+
+        const { data, error } = await supabase
+            .from('community_posts')
+            .insert(postData)
+            .select()
+            .single()
+
+        if (error) throw error
+        return response.created(res, data)
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * GET /api/v1/posts/:id/comments
+ * Get comments for a specific post
+ */
+export async function getPostComments(req: Request, res: Response, next: NextFunction) {
+    try {
+        const postId = req.params.id
+
+        let comments;
+        try {
+            const { data, error } = await supabase
+                .from('post_comments')
+                .select('*, profiles(username, avatar_url)')
+                .eq('post_id', postId)
+                .order('created_at', { ascending: false })
+
+            if (error) throw error
+            comments = data || []
+        } catch {
+            comments = []
+        }
+
+        return response.success(res, comments)
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * POST /api/v1/posts/:id/comment
+ * Add a comment to a post
+ */
+export async function addPostComment(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = req.user?.id
+        if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const postId = req.params.id
+        const { content } = req.body
+
+        if (!content || content.trim().length === 0) {
+            return response.failure(res, 400, 'validation', 'Comment content is required')
+        }
+
+        // Get user profile
+        let username = 'Anonymous'
+        let avatar_url = null
+        try {
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('username, avatar_url')
+                .eq('id', userId)
+                .single()
+            if (profile) {
+                username = profile.username || 'Anonymous'
+                avatar_url = profile.avatar_url
+            }
+        } catch { }
+
+        const { data, error } = await supabase
+            .from('post_comments')
+            .insert({
+                post_id: postId,
+                user_id: userId,
+                content: content.trim(),
+                username,
+                avatar_url
+            })
+            .select()
+            .single()
+
+        if (error) throw error
+
+        // Increment comment count on the post
+        try {
+            await supabase.rpc('increment_post_comment_count', { post_id_input: postId })
+        } catch {
+            // If RPC doesn't exist, try manual update
+            try {
+                const { data: post } = await supabase
+                    .from('community_posts')
+                    .select('comment_count')
+                    .eq('id', postId)
+                    .single()
+                if (post) {
+                    await supabase
+                        .from('community_posts')
+                        .update({ comment_count: (post.comment_count || 0) + 1 })
+                        .eq('id', postId)
+                }
+            } catch { }
+        }
+
+        return response.created(res, data)
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
  * POST /api/v1/posts/:id/like
  * Toggle like for a post (current user)
  */
