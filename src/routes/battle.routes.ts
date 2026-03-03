@@ -1,10 +1,14 @@
 import { Router } from "express";
-import * as AnimeController from "../controllers/anime.controller";
+import * as BattleController from "../controllers/battle.controller";
+import { authMiddleware } from "../middlewares/auth.middleware";
+import { optionalAuthMiddleware } from "../middlewares/optionalAuth.middleware";
 
 const router = Router()
 
-router.get("/", AnimeController.getAnimeList)
-router.get("/search", AnimeController.searchAnime)
-router.get("/:id", AnimeController.getAnimeDetails)
+router.get("/", BattleController.getBattles)
+router.post("/", authMiddleware, BattleController.createBattle)
+router.get("/my-votes", authMiddleware, BattleController.getMyVotes)
+router.get("/:id", optionalAuthMiddleware, BattleController.getBattleDetails)
+router.post("/:id/vote", authMiddleware, BattleController.voteBattle)
 
 export default router

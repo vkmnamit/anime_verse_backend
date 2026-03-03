@@ -16,7 +16,8 @@ export async function getBattles(req: Request, res: Response, next: NextFunction
     const { data, error, count } = await supabase
       .from('battles')
       .select('*, anime_a_rel:anime!battles_anime_a_fkey(*), anime_b_rel:anime!battles_anime_b_fkey(*)', { count: 'exact' })
-      .order('created_at', { ascending: false })
+      .order('round', { ascending: true })
+      .order('created_at', { ascending: true })
       .range(offset, offset + limit - 1)
 
     if (error) throw error
@@ -52,6 +53,7 @@ export async function createBattle(req: Request, res: Response, next: NextFuncti
 export async function getBattleDetails(req: Request, res: Response, next: NextFunction) {
   try {
     const { id } = req.params
+    const userId = req.user?.id
 
     // Fetch battle with anime details
     const { data: battle, error } = await supabase
@@ -72,6 +74,18 @@ export async function getBattleDetails(req: Request, res: Response, next: NextFu
     const votesB = (votes || []).filter(v => v.vote_for === 'B').length
     const total = votesA + votesB
 
+    // Fetch user's own vote if logged in
+    let userVote: string | null = null
+    if (userId) {
+      const { data: myVote } = await supabase
+        .from('battle_votes')
+        .select('vote_for')
+        .eq('battle_id', id)
+        .eq('user_id', userId)
+        .single()
+      userVote = myVote?.vote_for ?? null
+    }
+
     return response.success(res, {
       ...battle,
       votes: {
@@ -81,6 +95,7 @@ export async function getBattleDetails(req: Request, res: Response, next: NextFu
         percentA: total ? Math.round((votesA / total) * 100) : 0,
         percentB: total ? Math.round((votesB / total) * 100) : 0,
       },
+      userVote,
     })
   } catch (err) {
     return next(err)
@@ -106,6 +121,33 @@ export async function voteBattle(req: Request, res: Response, next: NextFunction
 
     if (error) throw error
     return response.success(res, data)
+  } catch (err) {
+    return next(err)
+  }
+}
+
+/**
+ * GET /api/v1/battles/my-votes
+ * Returns all battle_votes for the logged-in user as { [battle_id]: "A" | "B" }
+ */
+export async function getMyVotes(req: Request, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user?.id
+    if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+    const { data, error } = await supabase
+      .from('battle_votes')
+      .select('battle_id, vote_for')
+      .eq('user_id', userId)
+
+    if (error) throw error
+
+    // Shape: { "battle-uuid-1": "A", "battle-uuid-2": "B", ... }
+    const votesMap: Record<string, string> = {}
+    for (const row of data || []) {
+      votesMap[row.battle_id] = row.vote_for
+    }
+    return response.success(res, votesMap)
   } catch (err) {
     return next(err)
   }

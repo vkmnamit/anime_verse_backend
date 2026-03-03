@@ -11,10 +11,23 @@ const supabase = getServiceSupabase()
 export async function addOrUpdateWatchlist(req: Request, res: Response, next: NextFunction) {
     try {
         const userId = (req as any).user?.id
-        const { anime_id, status } = req.body
+        const { anime_id, status, anime_data } = req.body
 
         if (!anime_id) {
             return response.failure(res, 400, 'bad_request', 'anime_id is required')
+        }
+
+        // Auto-sync anime metadata if provided to satisfy FK constraints
+        if (anime_data) {
+            await supabase.from('anime').upsert({
+                id: anime_id,
+                title: anime_data.title || 'Unknown',
+                cover_image: anime_data.posterImage || '',
+                synopsis: anime_data.synopsis || '',
+                average_score: anime_data.rating || 0,
+                status: anime_data.status || 'unknown',
+                genres: anime_data.categories || []
+            }, { onConflict: 'id' })
         }
 
         const { data, error } = await supabase
@@ -79,6 +92,30 @@ export async function removeFromWatchlist(req: Request, res: Response, next: Nex
 
         if (error) throw error
         return response.success(res, { message: 'Removed from watchlist' })
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * GET /api/v1/watchlist/:username
+ * Publicly accessible watchlist for a user
+ */
+export async function getUserWatchlist(req: Request, res: Response, next: NextFunction) {
+    try {
+        const { username } = req.params
+
+        const { data: profile } = await supabase.from('profiles').select('id').eq('username', username).single()
+        if (!profile) return response.failure(res, 404, 'not_found', 'User not found')
+
+        const { data, error } = await supabase
+            .from('watchlist')
+            .select('*, anime(*)')
+            .eq('user_id', profile.id)
+            .order('updated_at', { ascending: false })
+
+        if (error) throw error
+        return response.success(res, data || [])
     } catch (err) {
         return next(err)
     }

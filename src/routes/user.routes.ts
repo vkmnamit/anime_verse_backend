@@ -18,4 +18,8 @@ router.get('/:username/stats', optionalAuthMiddleware, UserController.getUserSta
 // GET /api/v1/users/:username — get public profile
 router.get('/:username', optionalAuthMiddleware, UserController.getProfile)
 
+// Activities & Votes
+router.get('/:username/comments', optionalAuthMiddleware, UserController.getUserComments)
+router.get('/:username/battles', optionalAuthMiddleware, UserController.getUserBattles)
+
 export default router

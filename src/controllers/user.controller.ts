@@ -12,7 +12,7 @@ export async function getProfile(req: Request, res: Response, next: NextFunction
 
         const { data, error } = await supabase
             .from('profiles')
-            .select('id, username, avatar_url, bio, created_at')
+            .select('id, username, avatar_url, bio, genres, twitter, instagram, facebook, created_at')
             .eq('username', username)
             .single()
 
@@ -31,11 +31,15 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
         const userId = req.user?.id
         if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
 
-        const { username, avatar_url, bio } = req.body
+        const { username, avatar_url, bio, genres, twitter, instagram, facebook } = req.body
         const updates: Record<string, any> = {}
         if (username !== undefined) updates.username = username
         if (avatar_url !== undefined) updates.avatar_url = avatar_url
         if (bio !== undefined) updates.bio = bio
+        if (genres !== undefined) updates.genres = genres
+        if (twitter !== undefined) updates.twitter = twitter
+        if (instagram !== undefined) updates.instagram = instagram
+        if (facebook !== undefined) updates.facebook = facebook
 
         const { data, error } = await supabase
             .from('profiles')
@@ -117,6 +121,58 @@ export async function getMyStats(req: Request, res: Response, next: NextFunction
 
         const stats = await buildUserStats(userId)
         return response.success(res, stats)
+    } catch (err) {
+        return next(err)
+    }
+}
+/**
+ * GET /api/v1/users/:username/comments
+ */
+export async function getUserComments(req: Request, res: Response, next: NextFunction) {
+    try {
+        const { username } = req.params
+
+        const { data: profile } = await supabase.from('profiles').select('id').eq('username', username).single()
+        if (!profile) return response.failure(res, 404, 'not_found', 'User not found')
+
+        const { data, error } = await supabase
+            .from('comments')
+            .select('*, anime:anime(*)')
+            .eq('user_id', profile.id)
+            .order('created_at', { ascending: false })
+
+        if (error) throw error
+        return response.success(res, data || [])
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * GET /api/v1/users/:username/battles
+ */
+export async function getUserBattles(req: Request, res: Response, next: NextFunction) {
+    try {
+        const { username } = req.params
+
+        const { data: profile } = await supabase.from('profiles').select('id').eq('username', username).single()
+        if (!profile) return response.failure(res, 404, 'not_found', 'User not found')
+
+        const { data, error } = await supabase
+            .from('battle_votes')
+            .select(`
+                *,
+                battle:battles(
+                    *,
+                    anime_a_rel:anime!battles_anime_a_fkey(*),
+                    anime_b_rel:anime!battles_anime_b_fkey(*)
+                )
+            `)
+            .eq('user_id', profile.id)
+            .order('created_at', { ascending: false })
+
+        if (error) throw error
+        return response.success(res, data || [])
     } catch (err) {
         return next(err)
     }

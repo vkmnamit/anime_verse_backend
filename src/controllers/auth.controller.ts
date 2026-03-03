@@ -106,7 +106,7 @@ export async function login(req: Request, res: Response, next: NextFunction) {
     // Fetch profile info using service client (bypasses RLS)
     const { data: profile } = await db
       .from('profiles')
-      .select('username, avatar_url, bio')
+      .select('username, avatar_url, bio, genres')
       .eq('id', data.user.id)
       .single()
 
@@ -117,6 +117,7 @@ export async function login(req: Request, res: Response, next: NextFunction) {
         username: profile?.username ?? null,
         avatar_url: profile?.avatar_url ?? null,
         bio: profile?.bio ?? null,
+        genres: profile?.genres ?? [],
       },
       session: {
         access_token: data.session.access_token,
@@ -168,7 +169,7 @@ export async function getMe(req: Request, res: Response, next: NextFunction) {
 
     const { data: profile } = await db
       .from('profiles')
-      .select('username, avatar_url, bio, created_at')
+      .select('username, avatar_url, bio, genres, created_at')
       .eq('id', user.id)
       .single()
 
@@ -178,6 +179,7 @@ export async function getMe(req: Request, res: Response, next: NextFunction) {
       username: profile?.username ?? null,
       avatar_url: profile?.avatar_url ?? null,
       bio: profile?.bio ?? null,
+      genres: profile?.genres ?? [],
       created_at: profile?.created_at ?? user.created_at,
     })
   } catch (err) {

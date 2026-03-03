@@ -16,4 +16,7 @@ router.get('/', authMiddleware, WatchlistController.getWatchlist)
 // DELETE /api/v1/watchlist/:animeId — remove from watchlist
 router.delete('/:animeId', authMiddleware, WatchlistController.removeFromWatchlist)
 
-export default router
+// GET /api/v1/watchlist/:username — public watchlist
+router.get('/:username', WatchlistController.getUserWatchlist)
+
+export default router;

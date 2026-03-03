@@ -12,7 +12,20 @@ export async function createComment(req: Request, res: Response, next: NextFunct
         const userId = req.user?.id
         if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
 
-        const { anime_id, content, parent_id } = req.body
+        const { anime_id, content, parent_id, anime_data } = req.body
+
+        // Auto-sync anime metadata if provided
+        if (anime_data) {
+            await supabase.from('anime').upsert({
+                id: anime_id,
+                title: anime_data.title || 'Unknown',
+                cover_image: anime_data.posterImage || '',
+                synopsis: anime_data.synopsis || '',
+                average_score: anime_data.rating || 0,
+                status: anime_data.status || 'unknown',
+                genres: anime_data.categories || []
+            }, { onConflict: 'id' })
+        }
 
         const { data, error } = await supabase
             .from('comments')

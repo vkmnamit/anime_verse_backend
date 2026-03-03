@@ -73,7 +73,7 @@ export function validateWatchlist(req: Request): string[] {
     const errors: string[] = []
     if (!req.body.anime_id) errors.push('anime_id is required')
     if (!req.body.status) errors.push('status is required')
-    const allowed = ['watching', 'completed', 'plan_to_watch', 'dropped', 'on_hold']
+    const allowed = ['watching', 'completed', 'plan_to_watch', 'dropped', 'on_hold', 'planned']
     if (req.body.status && !allowed.includes(req.body.status)) {
         errors.push(`status must be one of: ${allowed.join(', ')}`)
     }
