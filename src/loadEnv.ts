@@ -9,7 +9,7 @@ const envCandidates = [
 
 for (const p of envCandidates) {
     if (fs.existsSync(p)) {
-        config({ path: p })
+        config({ path: p, override: false }) // Railway env vars take precedence over .env
         break
     }
 }
