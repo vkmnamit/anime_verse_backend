@@ -104,11 +104,20 @@ export async function login(req: Request, res: Response, next: NextFunction) {
     }
 
     // Fetch profile info using service client (bypasses RLS)
-    const { data: profile } = await db
+    let { data: profile } = await db
       .from('profiles')
       .select('username, avatar_url, bio, genres')
       .eq('id', data.user.id)
       .single()
+
+    if (!profile) {
+      const fallbackName = data.user.user_metadata?.username || data.user.email?.split('@')[0] || `user_${data.user.id.substring(0, 6)}`;
+      await db.from('profiles').upsert({
+        id: data.user.id,
+        username: fallbackName,
+      }, { onConflict: 'id' });
+      profile = { username: fallbackName, avatar_url: null, bio: null, genres: [] };
+    }
 
     return response.success(res, {
       user: {
@@ -167,11 +176,20 @@ export async function getMe(req: Request, res: Response, next: NextFunction) {
       return response.failure(res, 401, 'unauthorized', 'Invalid or expired token')
     }
 
-    const { data: profile } = await db
+    let { data: profile } = await db
       .from('profiles')
       .select('username, avatar_url, bio, genres, created_at')
       .eq('id', user.id)
       .single()
+
+    if (!profile) {
+      const fallbackName = user.user_metadata?.username || user.email?.split('@')[0] || `user_${user.id.substring(0, 6)}`;
+      await db.from('profiles').upsert({
+        id: user.id,
+        username: fallbackName,
+      }, { onConflict: 'id' });
+      profile = { username: fallbackName, avatar_url: null, bio: null, genres: [], created_at: user.created_at };
+    }
 
     return response.success(res, {
       id: user.id,

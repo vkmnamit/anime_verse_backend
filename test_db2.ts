@@ -1,0 +1,1 @@
+import { config } from 'dotenv'; config(); import { createClient } from '@supabase/supabase-js'; const s = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY); async function run() { const {data} = await s.from('profiles').select('*'); console.log(data); } run();

@@ -55,9 +55,9 @@ export async function getBattles(req: Request, res: Response, next: NextFunction
 
     const { data, error, count } = await supabase
       .from('battles')
-      .select('id, anime_a_name, anime_b_name, round, status, winner, created_at', { count: 'exact' })
+      .select('id, anime_a_name, anime_b_name, round, day_number, status, winner, created_at', { count: 'exact' })
       .not('anime_a_name', 'is', null)
-      .order('round', { ascending: true })
+      .order('day_number', { ascending: true })
       .order('created_at', { ascending: true })
       .range(offset, offset + limit - 1)
 
@@ -77,11 +77,11 @@ export async function getBattles(req: Request, res: Response, next: NextFunction
  */
 export async function createBattle(req: Request, res: Response, next: NextFunction) {
   try {
-    const { anime_a_name, anime_b_name, round } = req.body
+    const { anime_a_name, anime_b_name, round, day_number } = req.body
 
     const { data, error } = await supabase
       .from('battles')
-      .insert({ anime_a_name, anime_b_name, round: round ?? 1, status: 'active' })
+      .insert({ anime_a_name, anime_b_name, round: round ?? 1, day_number: day_number ?? 1, status: 'active' })
       .select()
       .single()
 
@@ -102,7 +102,7 @@ export async function getBattleDetails(req: Request, res: Response, next: NextFu
 
     const { data: battle, error } = await supabase
       .from('battles')
-      .select('id, anime_a_name, anime_b_name, round, status, winner, created_at')
+      .select('id, anime_a_name, anime_b_name, round, day_number, status, winner, created_at')
       .eq('id', id)
       .single()
 
@@ -199,6 +199,203 @@ export async function getMyVotes(req: Request, res: Response, next: NextFunction
       votesMap[row.battle_id] = row.vote_for
     }
     return response.success(res, votesMap)
+  } catch (err) {
+    return next(err)
+  }
+}
+
+// ─── Tournament helpers ────────────────────────────────────────────────────────
+
+/** Monday-anchored tournament epoch — matches seed_battles.sql */
+const TOURNAMENT_EPOCH = new Date('2026-03-02T00:00:00Z')
+
+/** Returns 1–7 based on current UTC time vs epoch */
+function getCurrentTournamentDay(): number {
+  const msSince = Date.now() - TOURNAMENT_EPOCH.getTime()
+  const daysSince = Math.floor(msSince / (1000 * 60 * 60 * 24))
+  const dayInCycle = (daysSince % 7) + 1
+  return Math.max(1, Math.min(7, dayInCycle))
+}
+
+/** Map tournament day → bracket round number */
+function roundForDay(day: number): number {
+  if (day <= 4) return 1  // R16: Days 1-4
+  if (day <= 6) return 2  // QF:  Days 5-6
+  return 3                // SF/Final: Day 7
+}
+
+/**
+ * GET /api/v1/battles/today
+ * Returns the 2 battles scheduled for the current tournament day.
+ * Enriches with Kitsu images + vote counts like getBattles.
+ */
+export async function getTodaysBattles(req: Request, res: Response, next: NextFunction) {
+  try {
+    const day = getCurrentTournamentDay()
+
+    const { data, error } = await supabase
+      .from('battles')
+      .select('id, anime_a_name, anime_b_name, round, day_number, status, winner, created_at')
+      .not('anime_a_name', 'is', null)
+      .eq('day_number', day)
+      .order('created_at', { ascending: true })
+
+    if (error) throw error
+
+    const enriched = await Promise.all((data || []).map(enrichBattle))
+
+    return response.success(res, { day, battles: enriched })
+  } catch (err) {
+    return next(err)
+  }
+}
+
+/**
+ * POST /api/v1/battles/advance
+ * Admin utility: close battles for a given day_number by picking the winner
+ * based on vote count (most votes wins), then auto-creates next round matches.
+ *
+ * Body: { day_number: number }  ← the day whose battles to close
+ *
+ * Flow:
+ *   Day 1 closes → creates Day-5 QF slot A (winner of Day1 M1 vs winner of Day1 M2)
+ *   Day 2 closes → creates Day-5 QF slot B
+ *   Day 3 closes → creates Day-6 QF slot A
+ *   Day 4 closes → creates Day-6 QF slot B
+ *   Day 5 closes → creates Day-7 SF match 1
+ *   Day 6 closes → creates Day-7 SF match 2
+ *   Day 7 SF closed → creates Day-7 FINAL (round 4)
+ */
+export async function advanceTournament(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { day_number } = req.body as { day_number: number }
+    if (!day_number || day_number < 1 || day_number > 7) {
+      return response.failure(res, 400, 'bad_request', 'day_number must be 1–7')
+    }
+
+    // 1. Fetch all active battles for this day
+    const { data: dayBattles, error: fetchErr } = await supabase
+      .from('battles')
+      .select('id, anime_a_name, anime_b_name, round, day_number, status, winner')
+      .not('anime_a_name', 'is', null)
+      .eq('day_number', day_number)
+      .eq('status', 'active')
+
+    if (fetchErr) throw fetchErr
+    if (!dayBattles || dayBattles.length === 0) {
+      return response.failure(res, 404, 'not_found', `No active battles found for day ${day_number}`)
+    }
+
+    // 2. For each battle determine winner by vote count (random on tie)
+    const closedWinners: { name: string; battleId: number }[] = []
+    for (const battle of dayBattles) {
+      const { data: votes } = await supabase
+        .from('battle_votes')
+        .select('vote_for')
+        .eq('battle_id', battle.id)
+
+      const votesA = (votes || []).filter(v => v.vote_for === 'A').length
+      const votesB = (votes || []).filter(v => v.vote_for === 'B').length
+      // Random tie-breaking when votes are equal (or both zero)
+      const winner: 'A' | 'B' = votesA !== votesB
+        ? (votesA > votesB ? 'A' : 'B')
+        : (Math.random() < 0.5 ? 'A' : 'B')
+
+      await supabase
+        .from('battles')
+        .update({ status: 'completed', winner })
+        .eq('id', battle.id)
+
+      const winnerName = winner === 'A' ? battle.anime_a_name : battle.anime_b_name
+      closedWinners.push({ name: winnerName, battleId: battle.id })
+    }
+
+    // 3. Auto-create next round match from THIS day's 2 winners (no partner needed)
+    // Day-mapping → next battle day + round
+    const ADVANCE_MAP: Record<number, { nextDay: number; nextRound: number }> = {
+      1: { nextDay: 5, nextRound: 2 }, // Day 1's 2 winners → QF match on Day 5
+      2: { nextDay: 5, nextRound: 2 }, // Day 2's 2 winners → QF match on Day 5
+      3: { nextDay: 6, nextRound: 2 }, // Day 3's 2 winners → QF match on Day 6
+      4: { nextDay: 6, nextRound: 2 }, // Day 4's 2 winners → QF match on Day 6
+      5: { nextDay: 7, nextRound: 3 }, // Day 5's 2 QF winners → SF match on Day 7
+      6: { nextDay: 7, nextRound: 3 }, // Day 6's 2 QF winners → SF match on Day 7
+    }
+
+    const mapping = ADVANCE_MAP[day_number]
+    let nextMatch: any = null
+
+    if (mapping && closedWinners.length >= 2) {
+      // Only create if a next-day match from this day's winners doesn't already exist
+      // We track it by checking how many next-round matches already exist for that day
+      const { data: existing } = await supabase
+        .from('battles')
+        .select('id')
+        .eq('day_number', mapping.nextDay)
+        .eq('round', mapping.nextRound)
+        .not('anime_a_name', 'is', null)
+
+      // Each source day produces exactly 1 next-round match
+      // Days 1&2 each produce 1 QF match → Day 5 can have up to 2 QF matches
+      // Days 3&4 each produce 1 QF match → Day 6 can have up to 2 QF matches
+      // Days 5&6 each produce 1 SF match → Day 7 can have up to 2 SF matches (+ 1 Final)
+      const maxForNextDay = 2 // up to 2 matches per next day
+      if (!existing || existing.length < maxForNextDay) {
+        const { data: created, error: createErr } = await supabase
+          .from('battles')
+          .insert({
+            anime_a_name: closedWinners[0].name,
+            anime_b_name: closedWinners[1].name,
+            round: mapping.nextRound,
+            day_number: mapping.nextDay,
+            status: 'active',
+          })
+          .select()
+          .single()
+
+        if (!createErr) nextMatch = created
+      }
+    }
+
+    // Day 7: if both SF battles are closed, auto-create the Final
+    if (day_number === 7) {
+      const { data: sfBattles } = await supabase
+        .from('battles')
+        .select('winner, anime_a_name, anime_b_name, round')
+        .not('anime_a_name', 'is', null)
+        .eq('day_number', 7)
+        .eq('round', 3)
+        .eq('status', 'completed')
+
+      if (sfBattles && sfBattles.length >= 2) {
+        const { data: existingFinal } = await supabase
+          .from('battles')
+          .select('id')
+          .eq('day_number', 7)
+          .eq('round', 4)
+
+        if (!existingFinal || existingFinal.length === 0) {
+          const sfWinners = sfBattles.map(b => b.winner === 'A' ? b.anime_a_name : b.anime_b_name)
+          const { data: finalMatch } = await supabase
+            .from('battles')
+            .insert({
+              anime_a_name: sfWinners[0],
+              anime_b_name: sfWinners[1],
+              round: 4,
+              day_number: 7,
+              status: 'active',
+            })
+            .select()
+            .single()
+          nextMatch = finalMatch
+        }
+      }
+    }
+
+    return response.success(res, {
+      closed: closedWinners,
+      nextMatch,
+      message: `Day ${day_number} battles closed. ${nextMatch ? 'Next round match created.' : 'Waiting for partner day to complete.'}`,
+    })
   } catch (err) {
     return next(err)
   }
