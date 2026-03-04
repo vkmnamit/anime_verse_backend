@@ -10,15 +10,36 @@ const supabase = getServiceSupabase()
 export async function getAnimeList(req: Request, res: Response, next: NextFunction) {
     try {
         const { page, limit, offset, sort, filters } = parsePagination(req.query as any)
+        const q = req.query.q as string
 
         let query = supabase.from('anime').select('*', { count: 'exact' })
 
-        if (filters?.genre) query = query.contains('genres', [filters.genre])
-        if (filters?.status) query = query.eq('status', filters.status)
+        // Filters
+        if (q) {
+            query = query.or(`title.ilike.%${q}%,genres.cs.{"${q}"}`)
+        }
+        if (filters?.genre) {
+            query = query.contains('genres', [filters.genre])
+        }
+        if (filters?.status) {
+            query = query.eq('status', filters.status)
+        }
+        if (req.query.year) {
+            query = query.gte('release_date', `${req.query.year}-01-01`).lte('release_date', `${req.query.year}-12-31`)
+        }
 
-        if (sort === 'popular') query = query.order('popularity', { ascending: false })
-        else if (sort === 'score') query = query.order('average_score', { ascending: false })
-        else query = query.order('created_at', { ascending: false })
+        // Sorting
+        if (sort === 'popular') {
+            query = query.order('popularity', { ascending: false })
+        } else if (sort === 'score') {
+            query = query.order('average_score', { ascending: false })
+        } else if (sort === 'trending') {
+            query = query.order('popularity', { ascending: false }).order('average_score', { ascending: false })
+        } else if (sort === 'recent') {
+            query = query.order('release_date', { ascending: false })
+        } else {
+            query = query.order('created_at', { ascending: false })
+        }
 
         query = query.range(offset, offset + limit - 1)
 

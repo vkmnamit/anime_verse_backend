@@ -22,4 +22,11 @@ router.get('/:username', optionalAuthMiddleware, UserController.getProfile)
 router.get('/:username/comments', optionalAuthMiddleware, UserController.getUserComments)
 router.get('/:username/battles', optionalAuthMiddleware, UserController.getUserBattles)
 
+// Social Relationships
+router.get('/search', UserController.searchUsers)
+router.get('/:username/followers', optionalAuthMiddleware, UserController.getFollowers)
+router.get('/:username/following', optionalAuthMiddleware, UserController.getFollowing)
+router.post('/:username/follow', authMiddleware, UserController.followUser)
+router.delete('/:username/follow', authMiddleware, UserController.unfollowUser)
+
 export default router

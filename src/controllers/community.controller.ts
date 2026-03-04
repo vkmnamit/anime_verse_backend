@@ -46,6 +46,10 @@ export async function createCommunity(req: Request, res: Response, next: NextFun
             .single()
 
         if (error) throw error
+
+        // Automatically join the creator
+        await supabase.from('community_members').insert({ community_id: data.id, user_id: userId })
+
         return response.created(res, data)
     } catch (err) {
         return next(err)
@@ -119,6 +123,77 @@ export async function getCommunityBySlug(req: Request, res: Response, next: Next
         }
 
         return response.success(res, community)
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * POST /api/v1/community/:slug/join
+ * Toggle membership for a community
+ */
+export async function toggleMembership(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = req.user?.id
+        if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const slug = String(req.params.slug)
+        const formattedSlug = slug.startsWith('r/') ? slug : `r/${slug}`
+
+        // Find community ID
+        const { data: community, error: fetchErr } = await supabase
+            .from('communities')
+            .select('id')
+            .or(`slug.eq.${slug},slug.eq.${formattedSlug}`)
+            .maybeSingle()
+
+        if (fetchErr || !community) {
+            return response.failure(res, 404, 'not_found', 'Community not found')
+        }
+
+        // Check if member already
+        const { data: existing } = await supabase
+            .from('community_members')
+            .select('id')
+            .eq('community_id', community.id)
+            .eq('user_id', userId)
+            .maybeSingle()
+
+        if (existing) {
+            // Leave
+            await supabase.from('community_members').delete().eq('id', existing.id)
+            // Decrement member count
+            await supabase.rpc('decrement_community_member_count', { community_id_input: community.id })
+            return response.success(res, { joined: false })
+        } else {
+            // Join
+            await supabase.from('community_members').insert({ community_id: community.id, user_id: userId })
+            // Increment member count
+            await supabase.rpc('increment_community_member_count', { community_id_input: community.id })
+            return response.success(res, { joined: true })
+        }
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * GET /api/v1/community/me/joined
+ * Get list of community slugs the current user has joined
+ */
+export async function getMyJoinedCommunities(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = req.user?.id
+        if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const { data, error } = await supabase
+            .from('community_members')
+            .select('communities(slug)')
+            .eq('user_id', userId)
+
+        if (error) throw error
+        const slugs = data.map((d: any) => d.communities?.slug).filter(Boolean)
+        return response.success(res, slugs)
     } catch (err) {
         return next(err)
     }

@@ -57,13 +57,15 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
 /**
  * Helper: build stats for a given user ID
  */
-async function buildUserStats(userId: string) {
-    const [reactions, opinions, comments, watchlist, battles] = await Promise.all([
+async function buildUserStats(userId: string, requesterId?: string) {
+    const [reactions, opinions, comments, watchlist, battles, followers, following] = await Promise.all([
         supabase.from('reactions').select('*', { count: 'exact', head: true }).eq('user_id', userId),
         supabase.from('opinions').select('*', { count: 'exact', head: true }).eq('user_id', userId),
         supabase.from('comments').select('*', { count: 'exact', head: true }).eq('user_id', userId),
         supabase.from('watchlist').select('*', { count: 'exact', head: true }).eq('user_id', userId),
         supabase.from('battle_votes').select('*', { count: 'exact', head: true }).eq('user_id', userId),
+        supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', userId),
+        supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', userId),
     ])
 
     // Watchlist breakdown by status
@@ -77,6 +79,17 @@ async function buildUserStats(userId: string) {
         watchlistBreakdown[row.status] = (watchlistBreakdown[row.status] || 0) + 1
     }
 
+    let is_following = false
+    if (requesterId && requesterId !== userId) {
+        const { data: followCheck } = await supabase
+            .from('follows')
+            .select('id')
+            .eq('follower_id', requesterId)
+            .eq('following_id', userId)
+            .single()
+        is_following = !!followCheck
+    }
+
     return {
         reactions_given: reactions.count ?? 0,
         opinions_posted: opinions.count ?? 0,
@@ -84,6 +97,9 @@ async function buildUserStats(userId: string) {
         watchlist_total: watchlist.count ?? 0,
         watchlist_breakdown: watchlistBreakdown,
         battles_voted: battles.count ?? 0,
+        follower_count: followers.count ?? 0,
+        following_count: following.count ?? 0,
+        is_following
     }
 }
 
@@ -93,6 +109,7 @@ async function buildUserStats(userId: string) {
 export async function getUserStats(req: Request, res: Response, next: NextFunction) {
     try {
         const { username } = req.params
+        const requesterId = req.user?.id
 
         // Resolve username → user id
         const { data: profile, error: pErr } = await supabase
@@ -103,7 +120,7 @@ export async function getUserStats(req: Request, res: Response, next: NextFuncti
 
         if (pErr || !profile) return response.failure(res, 404, 'not_found', 'User not found')
 
-        const stats = await buildUserStats(profile.id)
+        const stats = await buildUserStats(profile.id, requesterId)
         return response.success(res, { username: profile.username, ...stats })
     } catch (err) {
         return next(err)
@@ -169,6 +186,117 @@ export async function getUserBattles(req: Request, res: Response, next: NextFunc
             `)
             .eq('user_id', profile.id)
             .order('created_at', { ascending: false })
+
+        if (error) throw error
+        return response.success(res, data || [])
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * SOCIAL: Follow/Unfollow/Search
+ */
+
+export async function followUser(req: Request, res: Response, next: NextFunction) {
+    try {
+        const followerId = req.user?.id
+        const { username } = req.params
+        if (!followerId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const { data: profile } = await supabase.from('profiles').select('id').eq('username', username).single()
+        if (!profile) return response.failure(res, 404, 'not_found', 'User not found')
+
+        if (profile.id === followerId) return response.failure(res, 400, 'bad_request', 'Cannot follow yourself')
+
+        const { error } = await supabase.from('follows').insert({
+            follower_id: followerId,
+            following_id: profile.id
+        })
+
+        if (error && error.code !== '23505') throw error // ignore duplicate key
+        return response.success(res, { followed: true })
+    } catch (err) {
+        return next(err)
+    }
+}
+
+export async function unfollowUser(req: Request, res: Response, next: NextFunction) {
+    try {
+        const followerId = req.user?.id
+        const { username } = req.params
+        if (!followerId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const { data: profile } = await supabase.from('profiles').select('id').eq('username', username).single()
+        if (!profile) return response.failure(res, 404, 'not_found', 'User not found')
+
+        const { error } = await supabase
+            .from('follows')
+            .delete()
+            .eq('follower_id', followerId)
+            .eq('following_id', profile.id)
+
+        if (error) throw error
+        return response.success(res, { unfollowed: true })
+    } catch (err) {
+        return next(err)
+    }
+}
+
+export async function getFollowers(req: Request, res: Response, next: NextFunction) {
+    try {
+        const { username } = req.params
+        const { data: profile } = await supabase.from('profiles').select('id').eq('username', username).single()
+        if (!profile) return response.failure(res, 404, 'not_found', 'User not found')
+
+        const { data, error } = await supabase
+            .from('follows')
+            .select(`
+                created_at,
+                profile:profiles!follows_follower_id_fkey(id, username, avatar_url, bio)
+            `)
+            .eq('following_id', profile.id)
+            .order('created_at', { ascending: false })
+
+        if (error) throw error
+        return response.success(res, data?.map(f => f.profile) || [])
+    } catch (err) {
+        return next(err)
+    }
+}
+
+export async function getFollowing(req: Request, res: Response, next: NextFunction) {
+    try {
+        const { username } = req.params
+        const { data: profile } = await supabase.from('profiles').select('id').eq('username', username).single()
+        if (!profile) return response.failure(res, 404, 'not_found', 'User not found')
+
+        const { data, error } = await supabase
+            .from('follows')
+            .select(`
+                created_at,
+                profile:profiles!follows_following_id_fkey(id, username, avatar_url, bio)
+            `)
+            .eq('follower_id', profile.id)
+            .order('created_at', { ascending: false })
+
+        if (error) throw error
+        return response.success(res, data?.map(f => f.profile) || [])
+    } catch (err) {
+        return next(err)
+    }
+}
+
+export async function searchUsers(req: Request, res: Response, next: NextFunction) {
+    try {
+        const { q } = req.query
+        if (!q) return response.success(res, [])
+
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('id, username, avatar_url, bio')
+            .ilike('username', `%${q}%`)
+            .limit(10)
 
         if (error) throw error
         return response.success(res, data || [])

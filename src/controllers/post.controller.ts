@@ -18,6 +18,21 @@ export async function createPost(req: Request, res: Response, next: NextFunction
             return response.failure(res, 400, 'validation', 'Title is required')
         }
 
+        // Get user profile
+        let username = 'Anonymous'
+        let avatar_url = null
+        try {
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('username, avatar_url')
+                .eq('id', userId)
+                .single()
+            if (profile) {
+                username = profile.username || 'Anonymous'
+                avatar_url = profile.avatar_url
+            }
+        } catch { }
+
         const postData: any = {
             title: title.trim(),
             content: content?.trim() || null,
@@ -27,8 +42,11 @@ export async function createPost(req: Request, res: Response, next: NextFunction
             is_spoiler: is_spoiler || false,
             meta_tag: meta_tag || null,
             user_id: userId,
+            username,
+            avatar_url,
             votes: 0,
             comment_count: 0,
+            share_count: 0,
         }
 
         const { data, error } = await supabase
@@ -46,19 +64,19 @@ export async function createPost(req: Request, res: Response, next: NextFunction
 
 /**
  * GET /api/v1/posts/:id/comments
- * Get comments for a specific post
+ * Get comments for a specific post (includes replies via parent_id)
  */
 export async function getPostComments(req: Request, res: Response, next: NextFunction) {
     try {
         const postId = req.params.id
 
-        let comments;
+        let comments: any[] = [];
         try {
             const { data, error } = await supabase
                 .from('post_comments')
-                .select('*, profiles(username, avatar_url)')
+                .select('*')
                 .eq('post_id', postId)
-                .order('created_at', { ascending: false })
+                .order('created_at', { ascending: true })
 
             if (error) throw error
             comments = data || []
@@ -66,7 +84,24 @@ export async function getPostComments(req: Request, res: Response, next: NextFun
             comments = []
         }
 
-        return response.success(res, comments)
+        // Build a tree: top-level comments + replies nested
+        const topLevel: any[] = []
+        const byId: Record<string, any> = {}
+
+        for (const c of comments) {
+            c.replies = []
+            byId[c.id] = c
+        }
+
+        for (const c of comments) {
+            if (c.parent_id && byId[c.parent_id]) {
+                byId[c.parent_id].replies.push(c)
+            } else {
+                topLevel.push(c)
+            }
+        }
+
+        return response.success(res, topLevel)
     } catch (err) {
         return next(err)
     }
@@ -74,7 +109,8 @@ export async function getPostComments(req: Request, res: Response, next: NextFun
 
 /**
  * POST /api/v1/posts/:id/comment
- * Add a comment to a post
+ * Add a comment (or reply) to a post
+ * Body: { content, parent_id? }
  */
 export async function addPostComment(req: Request, res: Response, next: NextFunction) {
     try {
@@ -82,7 +118,7 @@ export async function addPostComment(req: Request, res: Response, next: NextFunc
         if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
 
         const postId = req.params.id
-        const { content } = req.body
+        const { content, parent_id } = req.body
 
         if (!content || content.trim().length === 0) {
             return response.failure(res, 400, 'validation', 'Comment content is required')
@@ -103,15 +139,19 @@ export async function addPostComment(req: Request, res: Response, next: NextFunc
             }
         } catch { }
 
+        const insertData: any = {
+            post_id: postId,
+            user_id: userId,
+            content: content.trim(),
+            username,
+            avatar_url,
+            parent_id: parent_id || null,
+            likes: 0,
+        }
+
         const { data, error } = await supabase
             .from('post_comments')
-            .insert({
-                post_id: postId,
-                user_id: userId,
-                content: content.trim(),
-                username,
-                avatar_url
-            })
+            .insert(insertData)
             .select()
             .single()
 
@@ -119,9 +159,9 @@ export async function addPostComment(req: Request, res: Response, next: NextFunc
 
         // Increment comment count on the post
         try {
-            await supabase.rpc('increment_post_comment_count', { post_id_input: postId })
+            await supabase.rpc('increment_post_comment_count', { post_id_input: Number(postId) })
         } catch {
-            // If RPC doesn't exist, try manual update
+            // Manual fallback
             try {
                 const { data: post } = await supabase
                     .from('community_posts')
@@ -137,7 +177,65 @@ export async function addPostComment(req: Request, res: Response, next: NextFunc
             } catch { }
         }
 
-        return response.created(res, data)
+        return response.created(res, { ...data, replies: [] })
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * DELETE /api/v1/posts/comments/:commentId
+ * Delete a comment (only by owner)
+ */
+export async function deleteComment(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = req.user?.id
+        if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const commentId = req.params.commentId
+
+        // Check ownership
+        const { data: comment, error: findErr } = await supabase
+            .from('post_comments')
+            .select('id, post_id, user_id')
+            .eq('id', commentId)
+            .single()
+
+        if (findErr || !comment) {
+            return response.failure(res, 404, 'not_found', 'Comment not found')
+        }
+
+        if (comment.user_id !== userId) {
+            return response.failure(res, 403, 'forbidden', 'You can only delete your own comments')
+        }
+
+        const { error: delErr } = await supabase
+            .from('post_comments')
+            .delete()
+            .eq('id', commentId)
+
+        if (delErr) throw delErr
+
+        // Decrement comment count
+        try {
+            await supabase.rpc('decrement_post_comment_count', { post_id_input: Number(comment.post_id) })
+        } catch {
+            try {
+                const { data: post } = await supabase
+                    .from('community_posts')
+                    .select('comment_count')
+                    .eq('id', comment.post_id)
+                    .single()
+                if (post) {
+                    await supabase
+                        .from('community_posts')
+                        .update({ comment_count: Math.max((post.comment_count || 0) - 1, 0) })
+                        .eq('id', comment.post_id)
+                }
+            } catch { }
+        }
+
+        return response.success(res, { deleted: true })
     } catch (err) {
         return next(err)
     }
@@ -145,7 +243,7 @@ export async function addPostComment(req: Request, res: Response, next: NextFunc
 
 /**
  * POST /api/v1/posts/:id/like
- * Toggle like for a post (current user)
+ * Toggle like for a post (current user). Updates vote count.
  */
 export async function togglePostLike(req: Request, res: Response, next: NextFunction) {
     try {
@@ -172,6 +270,26 @@ export async function togglePostLike(req: Request, res: Response, next: NextFunc
                 .eq('id', existing.id)
 
             if (delErr) throw delErr
+
+            // Decrement votes
+            try {
+                await supabase.rpc('decrement_post_votes', { post_id_input: Number(postId) })
+            } catch {
+                try {
+                    const { data: post } = await supabase
+                        .from('community_posts')
+                        .select('votes')
+                        .eq('id', postId)
+                        .single()
+                    if (post) {
+                        await supabase
+                            .from('community_posts')
+                            .update({ votes: Math.max((post.votes || 0) - 1, 0) })
+                            .eq('id', postId)
+                    }
+                } catch { }
+            }
+
             return response.success(res, { liked: false })
         } else {
             // Add like
@@ -180,6 +298,26 @@ export async function togglePostLike(req: Request, res: Response, next: NextFunc
                 .insert({ user_id: userId, post_id: postId })
 
             if (addErr) throw addErr
+
+            // Increment votes
+            try {
+                await supabase.rpc('increment_post_votes', { post_id_input: Number(postId) })
+            } catch {
+                try {
+                    const { data: post } = await supabase
+                        .from('community_posts')
+                        .select('votes')
+                        .eq('id', postId)
+                        .single()
+                    if (post) {
+                        await supabase
+                            .from('community_posts')
+                            .update({ votes: (post.votes || 0) + 1 })
+                            .eq('id', postId)
+                    }
+                } catch { }
+            }
+
             return response.success(res, { liked: true })
         }
     } catch (err) {
@@ -203,6 +341,113 @@ export async function getMyLikedPosts(req: Request, res: Response, next: NextFun
 
         if (error) throw error
         return response.success(res, data.map((d: any) => d.post_id))
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * POST /api/v1/posts/comments/:commentId/like
+ * Toggle like on a comment
+ */
+export async function toggleCommentLike(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = req.user?.id
+        if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const commentId = req.params.commentId
+
+        const { data: existing, error: fetchErr } = await supabase
+            .from('comment_likes')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('comment_id', commentId)
+            .maybeSingle()
+
+        if (fetchErr && fetchErr.code !== 'PGRST116') throw fetchErr
+
+        if (existing) {
+            const { error: delErr } = await supabase
+                .from('comment_likes')
+                .delete()
+                .eq('id', existing.id)
+            if (delErr) throw delErr
+
+            // Decrement comment likes
+            try {
+                await supabase.rpc('decrement_comment_likes', { comment_id_input: Number(commentId) })
+            } catch {
+                try {
+                    const { data: c } = await supabase.from('post_comments').select('likes').eq('id', commentId).single()
+                    if (c) await supabase.from('post_comments').update({ likes: Math.max((c.likes || 0) - 1, 0) }).eq('id', commentId)
+                } catch { }
+            }
+
+            return response.success(res, { liked: false })
+        } else {
+            const { error: addErr } = await supabase
+                .from('comment_likes')
+                .insert({ user_id: userId, comment_id: commentId })
+            if (addErr) throw addErr
+
+            // Increment comment likes
+            try {
+                await supabase.rpc('increment_comment_likes', { comment_id_input: Number(commentId) })
+            } catch {
+                try {
+                    const { data: c } = await supabase.from('post_comments').select('likes').eq('id', commentId).single()
+                    if (c) await supabase.from('post_comments').update({ likes: (c.likes || 0) + 1 }).eq('id', commentId)
+                } catch { }
+            }
+
+            return response.success(res, { liked: true })
+        }
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * GET /api/v1/posts/comments/likes/me
+ * Get list of comment IDs the current user has liked
+ */
+export async function getMyLikedComments(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = req.user?.id
+        if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const { data, error } = await supabase
+            .from('comment_likes')
+            .select('comment_id')
+            .eq('user_id', userId)
+
+        if (error) throw error
+        return response.success(res, data.map((d: any) => d.comment_id))
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * POST /api/v1/posts/:id/share
+ * Track a share action on a post (increments share_count)
+ */
+export async function trackPostShare(req: Request, res: Response, next: NextFunction) {
+    try {
+        const postId = req.params.id
+
+        try {
+            await supabase.rpc('increment_post_share_count', { post_id_input: Number(postId) })
+        } catch {
+            try {
+                const { data: post } = await supabase.from('community_posts').select('share_count').eq('id', postId).single()
+                if (post) {
+                    await supabase.from('community_posts').update({ share_count: (post.share_count || 0) + 1 }).eq('id', postId)
+                }
+            } catch { }
+        }
+
+        return response.success(res, { shared: true })
     } catch (err) {
         return next(err)
     }
@@ -234,6 +479,7 @@ export async function getPosts(req: Request, res: Response, next: NextFunction) 
                 community_name: "r/OnePiece",
                 votes: 4500,
                 comment_count: 520,
+                share_count: 120,
                 created_at: new Date().toISOString(),
                 meta_tag: "Discussion"
             },
@@ -245,6 +491,7 @@ export async function getPosts(req: Request, res: Response, next: NextFunction) 
                 community_name: "r/JujutsuKaisen",
                 votes: 8200,
                 comment_count: 1240,
+                share_count: 340,
                 created_at: new Date().toISOString(),
                 meta_tag: "Theories"
             },
@@ -256,6 +503,7 @@ export async function getPosts(req: Request, res: Response, next: NextFunction) 
                 community_name: "r/SoloLeveling",
                 votes: 3100,
                 comment_count: 180,
+                share_count: 55,
                 created_at: new Date().toISOString(),
                 meta_tag: "Anime"
             }
@@ -265,7 +513,6 @@ export async function getPosts(req: Request, res: Response, next: NextFunction) 
         try {
             console.log(`📡 [getPosts] Querying posts for slug: ${slug || 'HOME'}`);
 
-            // Protect against slow community ID lookup
             let resolvedSlugQuery = query;
             if (slug) {
                 const slugStr = String(slug);
@@ -283,7 +530,6 @@ export async function getPosts(req: Request, res: Response, next: NextFunction) 
                 }
             }
 
-            // Main posts query with timeout
             const { data, error } = await Promise.race([
                 resolvedSlugQuery,
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 500))

@@ -4,7 +4,11 @@ import { getServiceSupabase } from './config/supabase.config'
 async function check() {
     const sb = getServiceSupabase()
 
-    const tables = ['profiles', 'anime', 'reactions', 'opinions', 'opinion_votes', 'comments', 'watchlist', 'battles', 'battle_votes', 'notifications']
+    const tables = [
+        'profiles', 'anime', 'reactions', 'opinions', 'opinion_votes', 'comments',
+        'watchlist', 'battles', 'battle_votes', 'notifications',
+        'communities', 'community_posts', 'post_comments', 'post_likes', 'comment_likes'
+    ]
 
     for (const t of tables) {
         const { data, error } = await sb.from(t).select('*').limit(0)
