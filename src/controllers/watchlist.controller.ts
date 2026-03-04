@@ -76,6 +76,38 @@ export async function getWatchlist(req: Request, res: Response, next: NextFuncti
 }
 
 /**
+ * PATCH /api/v1/watchlist/:animeId
+ * Update status, episodes_watched, score, notes
+ */
+export async function updateWatchlistEntry(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = (req as any).user?.id
+        const { animeId } = req.params
+        const { status, episodes_watched, score, notes } = req.body
+
+        const updates: Record<string, any> = { updated_at: new Date().toISOString() }
+        if (status !== undefined) updates.status = status
+        if (episodes_watched !== undefined) updates.episodes_watched = Number(episodes_watched)
+        if (score !== undefined) updates.score = score === null ? null : Number(score)
+        if (notes !== undefined) updates.notes = notes
+
+        const { data, error } = await supabase
+            .from('watchlist')
+            .update(updates)
+            .eq('user_id', userId)
+            .eq('anime_id', animeId)
+            .select()
+            .single()
+
+        if (error) throw error
+        if (!data) return response.failure(res, 404, 'not_found', 'Watchlist entry not found')
+        return response.success(res, data)
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
  * DELETE /api/v1/watchlist/:animeId
  * Remove from watchlist
  */

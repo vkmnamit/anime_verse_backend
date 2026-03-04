@@ -13,6 +13,9 @@ router.post('/', authMiddleware, v.watchlist, WatchlistController.addOrUpdateWat
 // GET /api/v1/watchlist — get user's watchlist (optional ?status= filter)
 router.get('/', authMiddleware, WatchlistController.getWatchlist)
 
+// PATCH /api/v1/watchlist/:animeId — update progress, score, notes, status
+router.patch('/:animeId', authMiddleware, WatchlistController.updateWatchlistEntry)
+
 // DELETE /api/v1/watchlist/:animeId — remove from watchlist
 router.delete('/:animeId', authMiddleware, WatchlistController.removeFromWatchlist)
 
