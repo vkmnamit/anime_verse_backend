@@ -11,6 +11,7 @@ import userRoutes from './user.routes'
 import notificationRoutes from './notification.routes'
 import postRoutes from './post.routes'
 import communityRoutes from './community.routes'
+import uploadRoutes from './upload.routes'
 
 const router = Router()
 
@@ -26,5 +27,6 @@ router.use('/notifications', notificationRoutes)
 router.use('/posts', postRoutes)
 router.use('/community', communityRoutes)
 router.use('/communities', communityRoutes) // Plural alias for REST consistency
+router.use('/upload', uploadRoutes)
 
 export default router

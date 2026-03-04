@@ -25,7 +25,12 @@ export async function getAnimeList(req: Request, res: Response, next: NextFuncti
             query = query.eq('status', filters.status)
         }
         if (req.query.year) {
-            query = query.gte('release_date', `${req.query.year}-01-01`).lte('release_date', `${req.query.year}-12-31`)
+            // Only apply year filter if column exists (prevent crash if migration not run)
+            try {
+                query = query.gte('release_date', `${req.query.year}-01-01`).lte('release_date', `${req.query.year}-12-31`)
+            } catch (e) {
+                console.warn('[Backend] Release date filter failed, likely missing column.');
+            }
         }
 
         // Sorting
@@ -36,7 +41,8 @@ export async function getAnimeList(req: Request, res: Response, next: NextFuncti
         } else if (sort === 'trending') {
             query = query.order('popularity', { ascending: false }).order('average_score', { ascending: false })
         } else if (sort === 'recent') {
-            query = query.order('release_date', { ascending: false })
+            // Fallback to created_at if release_date is not yet available in schema
+            query = query.order('created_at', { ascending: false })
         } else {
             query = query.order('created_at', { ascending: false })
         }

@@ -31,10 +31,11 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
         const userId = req.user?.id
         if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
 
-        const { username, avatar_url, bio, genres, twitter, instagram, facebook } = req.body
+        const { username, avatar_url, banner_url, bio, genres, twitter, instagram, facebook } = req.body
         const updates: Record<string, any> = {}
         if (username !== undefined) updates.username = username
         if (avatar_url !== undefined) updates.avatar_url = avatar_url
+        if (banner_url !== undefined) updates.banner_url = banner_url
         if (bio !== undefined) updates.bio = bio
         if (genres !== undefined) updates.genres = genres
         if (twitter !== undefined) updates.twitter = twitter

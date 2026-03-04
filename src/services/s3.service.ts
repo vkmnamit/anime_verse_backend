@@ -34,8 +34,6 @@ export async function uploadToS3(
             Key: key,
             Body: buffer,
             ContentType: mimetype,
-            // Public read so URLs work without signed tokens
-            ACL: 'public-read',
         })
     )
 
