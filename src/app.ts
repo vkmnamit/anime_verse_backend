@@ -29,8 +29,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }))
 
-// Respond to preflight OPTIONS requests immediately
-app.options('*', cors())
+// Respond to preflight OPTIONS requests immediately (Express 5 wildcard syntax)
+app.options('/{*path}', cors())
 
 // Chrome Private Network Access header
 app.use((_req, res, next) => {
