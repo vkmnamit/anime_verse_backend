@@ -12,6 +12,9 @@ router.patch('/me', authMiddleware, v.profileUpdate, UserController.updateProfil
 // GET /api/v1/users/me/stats — own stats (auth required)
 router.get('/me/stats', authMiddleware, UserController.getMyStats)
 
+// GET /api/v1/users/me/taste — personalised genre taste (auth required)
+router.get('/me/taste', authMiddleware, UserController.getMyTaste)
+
 // GET /api/v1/users/:username/stats — public user stats
 router.get('/:username/stats', optionalAuthMiddleware, UserController.getUserStats)
 

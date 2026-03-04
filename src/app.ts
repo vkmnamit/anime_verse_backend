@@ -30,7 +30,7 @@ app.use(cors({
 }))
 
 // Respond to preflight OPTIONS requests immediately
-app.options('*', cors())
+app.options('(.*)', cors())
 
 // Chrome Private Network Access header
 app.use((_req, res, next) => {

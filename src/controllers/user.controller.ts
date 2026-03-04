@@ -142,6 +142,76 @@ export async function getMyStats(req: Request, res: Response, next: NextFunction
         return next(err)
     }
 }
+
+/**
+ * GET /api/v1/users/me/taste
+ * Derives the user's top genres from their activity:
+ *  - reactions on anime (weight: 2 per reaction)
+ *  - watchlist entries   (weight: 3 per entry)
+ *  - comments on anime  (weight: 1 per comment)
+ * Returns { topGenres: string[], rankedGenres: { genre: string, score: number }[] }
+ */
+export async function getMyTaste(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = req.user?.id
+        if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const genreScore: Record<string, number> = {}
+
+        const addGenres = (genres: string[] | null | undefined, weight: number) => {
+            if (!Array.isArray(genres)) return
+            for (const g of genres) {
+                if (g) genreScore[g] = (genreScore[g] || 0) + weight
+            }
+        }
+
+        // Reactions → join anime genres
+        const { data: reactions } = await supabase
+            .from('reactions')
+            .select('anime:anime(genres)')
+            .eq('user_id', userId)
+            .limit(100)
+
+        for (const r of reactions || []) {
+            addGenres((r.anime as any)?.genres, 2)
+        }
+
+        // Watchlist → join anime genres
+        const { data: watchlist } = await supabase
+            .from('watchlist')
+            .select('anime:anime(genres)')
+            .eq('user_id', userId)
+            .limit(200)
+
+        for (const w of watchlist || []) {
+            addGenres((w.anime as any)?.genres, 3)
+        }
+
+        // Comments on anime → join anime genres
+        const { data: comments } = await supabase
+            .from('comments')
+            .select('anime:anime(genres)')
+            .eq('user_id', userId)
+            .not('anime_id', 'is', null)
+            .limit(100)
+
+        for (const c of comments || []) {
+            addGenres((c.anime as any)?.genres, 1)
+        }
+
+        const ranked = Object.entries(genreScore)
+            .sort((a, b) => b[1] - a[1])
+            .map(([genre, score]) => ({ genre, score }))
+
+        return response.success(res, {
+            topGenres: ranked.slice(0, 5).map(r => r.genre),
+            rankedGenres: ranked.slice(0, 10),
+        })
+    } catch (err) {
+        return next(err)
+    }
+}
+
 /**
  * GET /api/v1/users/:username/comments
  */
