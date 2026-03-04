@@ -6,6 +6,11 @@ import * as UserController from '../controllers/user.controller'
 
 const router = Router()
 
+// ── /me routes (must come before /:username) ─────────────────────────────────
+
+// GET /api/v1/users/me — own full profile
+router.get('/me', authMiddleware, UserController.getMe)
+
 // PATCH /api/v1/users/me — update own profile (auth required)
 router.patch('/me', authMiddleware, v.profileUpdate, UserController.updateProfile)
 
@@ -14,6 +19,11 @@ router.get('/me/stats', authMiddleware, UserController.getMyStats)
 
 // GET /api/v1/users/me/taste — personalised genre taste (auth required)
 router.get('/me/taste', authMiddleware, UserController.getMyTaste)
+
+// ── /search (must come before /:username) ────────────────────────────────────
+router.get('/search', UserController.searchUsers)
+
+// ── /:username routes ────────────────────────────────────────────────────────
 
 // GET /api/v1/users/:username/stats — public user stats
 router.get('/:username/stats', optionalAuthMiddleware, UserController.getUserStats)
@@ -26,7 +36,6 @@ router.get('/:username/comments', optionalAuthMiddleware, UserController.getUser
 router.get('/:username/battles', optionalAuthMiddleware, UserController.getUserBattles)
 
 // Social Relationships
-router.get('/search', UserController.searchUsers)
 router.get('/:username/followers', optionalAuthMiddleware, UserController.getFollowers)
 router.get('/:username/following', optionalAuthMiddleware, UserController.getFollowing)
 router.post('/:username/follow', authMiddleware, UserController.followUser)

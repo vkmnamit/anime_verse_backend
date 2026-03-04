@@ -4,6 +4,27 @@ import { getServiceSupabase } from '../config/supabase.config'
 const supabase = getServiceSupabase()
 
 /**
+ * GET /api/v1/users/me — own full profile (auth required)
+ */
+export async function getMe(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = req.user?.id
+        if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('id, username, display_name, avatar_url, banner_url, bio, genres, twitter, instagram, facebook, created_at')
+            .eq('id', userId)
+            .single()
+
+        if (error || !data) return response.failure(res, 404, 'not_found', 'Profile not found')
+        return response.success(res, data)
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
  * GET /api/v1/users/:username
  */
 export async function getProfile(req: Request, res: Response, next: NextFunction) {
@@ -12,7 +33,7 @@ export async function getProfile(req: Request, res: Response, next: NextFunction
 
         const { data, error } = await supabase
             .from('profiles')
-            .select('id, username, avatar_url, bio, genres, twitter, instagram, facebook, created_at')
+            .select('id, username, display_name, avatar_url, banner_url, bio, genres, twitter, instagram, facebook, created_at')
             .eq('username', username)
             .single()
 
