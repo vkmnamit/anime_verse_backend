@@ -67,6 +67,14 @@ export async function getAnimeList(req: Request, res: Response, next: NextFuncti
 
         if (error) throw error
 
+        // If sorting isn't explicitly "popular", "score", or "trending" (e.g., initial load), let's shuffle the results
+        // so the discover page feels fresh 
+        if (!sort || sort === 'recent' || sort === '') {
+            if (data && data.length > 0) {
+                data = data.sort(() => Math.random() - 0.5);
+            }
+        }
+
         return response.success(res, data || [], buildMeta(count || 0, page, limit))
     } catch (err) {
         return next(err)

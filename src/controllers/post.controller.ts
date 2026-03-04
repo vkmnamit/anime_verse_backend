@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express'
 import response from '../utils/response.util'
+import { parsePagination, buildMeta } from '../utils/pagination.util'
 import { getServiceSupabase } from '../config/supabase.config'
 const supabase = getServiceSupabase()
 
@@ -460,10 +461,16 @@ export async function trackPostShare(req: Request, res: Response, next: NextFunc
 export async function getPosts(req: Request, res: Response, next: NextFunction) {
     try {
         const { community, slug } = req.query;
+        const { page, limit, offset } = parsePagination(req.query as any);
+
         let query = supabase
             .from('community_posts')
-            .select('*')
-            .order('created_at', { ascending: false });
+            .select('*', { count: 'exact' });
+
+        // We will sort in memory or sort by created at if looking at specific
+        if (community || slug) {
+            query = query.order('created_at', { ascending: false });
+        }
 
         if (community) {
             query = query.eq('community_id', community);
@@ -509,9 +516,12 @@ export async function getPosts(req: Request, res: Response, next: NextFunction) 
             }
         ];
 
+        query = query.range(offset, offset + limit - 1);
+
         let posts;
+        let totalCount = 0;
         try {
-            console.log(`📡 [getPosts] Querying posts for slug: ${slug || 'HOME'}`);
+            console.log(`📡 [getPosts] Querying posts for slug: ${slug || 'HOME'}, page: ${page}`);
 
             let resolvedSlugQuery = query;
             if (slug) {
@@ -530,20 +540,27 @@ export async function getPosts(req: Request, res: Response, next: NextFunction) 
                 }
             }
 
-            const { data, error } = await Promise.race([
+            const { data, error, count } = await Promise.race([
                 resolvedSlugQuery,
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 500))
             ]) as any;
 
             if (error) throw error;
             posts = data || [];
+            totalCount = count || 0;
         } catch (err) {
             console.warn("⚠️  [getPosts] Database slow or failed, using mock data instantly");
-            posts = mockPosts;
+            posts = mockPosts.slice(offset, offset + limit);
+            totalCount = mockPosts.length;
+        }
+
+        if (!slug && !community) {
+            // Shuffle for fresh home feed
+            posts = posts.sort(() => Math.random() - 0.5);
         }
 
         console.log(`[getPosts] Returning ${posts.length} posts`);
-        return response.success(res, posts);
+        return response.success(res, posts, buildMeta(totalCount, page, limit));
     } catch (err) {
         return next(err);
     }
