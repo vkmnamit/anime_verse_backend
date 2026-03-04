@@ -49,7 +49,22 @@ export async function getAnimeList(req: Request, res: Response, next: NextFuncti
 
         query = query.range(offset, offset + limit - 1)
 
-        const { data, error, count } = await query
+        let { data, error, count } = await query
+
+        if (error) {
+            // Handle common "column does not exist" error during migrations
+            if (error.code === '42703' && (req.query.year || sort === 'recent')) {
+                console.error('[Backend] Schema mismatch detected, retrying without release_date filter/sort');
+                // Retry simple query
+                const retry = await supabase.from('anime').select('*', { count: 'exact' })
+                    .order('created_at', { ascending: false })
+                    .range(offset, offset + limit - 1);
+                data = retry.data;
+                error = retry.error;
+                count = retry.count;
+            }
+        }
+
         if (error) throw error
 
         return response.success(res, data || [], buildMeta(count || 0, page, limit))
@@ -150,7 +165,10 @@ export async function getTrending(req: Request, res: Response, next: NextFunctio
         const trendingIds = Object.entries(countMap)
             .sort((a, b) => b[1] - a[1])
             .slice(0, limit)
-            .map(([id]) => id)
+            .map(([id]) => parseInt(id, 10))
+            .filter(id => !isNaN(id))
+
+        console.log('[getTrending] IDs being fetched:', trendingIds)
 
         if (trendingIds.length > 0) {
             const { data, error } = await supabase
@@ -158,11 +176,14 @@ export async function getTrending(req: Request, res: Response, next: NextFunctio
                 .select('*')
                 .in('id', trendingIds)
 
-            if (error) throw error
+            if (error) {
+                console.error('[getTrending] DB Error:', error)
+                throw error
+            }
 
             // Sort by reaction count
             const sorted = (data || []).sort(
-                (a, b) => (countMap[b.id] || 0) - (countMap[a.id] || 0)
+                (a, b) => (countMap[String(b.id)] || 0) - (countMap[String(a.id)] || 0)
             )
             return response.success(res, sorted)
         }

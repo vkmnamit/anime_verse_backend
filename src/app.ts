@@ -9,7 +9,11 @@ const app = express()
 // Allow any origin in development; use env-var list in production
 const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
-  : ['http://localhost:3000', 'http://127.0.0.1:3000']
+  : [
+      'http://localhost:3000',
+      'http://127.0.0.1:3000',
+      'https://animeverse-gules.vercel.app',
+    ]
 
 app.use(cors({
   origin: (origin, callback) => {
