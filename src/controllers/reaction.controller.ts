@@ -128,3 +128,50 @@ export async function getAnimeSentiment(req: Request, res: Response, next: NextF
     return next(err)
   }
 }
+
+/**
+ * DELETE /api/v1/reactions/:animeId
+ */
+export async function removeReaction(req: Request, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user?.id
+    if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+    const { animeId } = req.params
+
+    const { error } = await supabase
+      .from('reactions')
+      .delete()
+      .eq('user_id', userId)
+      .eq('anime_id', animeId)
+
+    if (error) throw error
+    return response.success(res, { message: 'Reaction removed' })
+  } catch (err) {
+    return next(err)
+  }
+}
+
+/**
+ * GET /api/v1/reactions/me/:animeId
+ */
+export async function getMyReaction(req: Request, res: Response, next: NextFunction) {
+  try {
+    const userId = req.user?.id
+    if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+    const { animeId } = req.params
+
+    const { data, error } = await supabase
+      .from('reactions')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('anime_id', animeId)
+      .maybeSingle()
+
+    if (error) throw error
+    return response.success(res, data || null)
+  } catch (err) {
+    return next(err)
+  }
+}

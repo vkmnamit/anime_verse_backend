@@ -20,7 +20,7 @@ export function validateReaction(req: Request): string[] {
     const errors: string[] = []
     if (!req.body.anime_id) errors.push('anime_id is required')
     if (!req.body.reaction_type) errors.push('reaction_type is required')
-    const allowed = ['masterpiece', 'great', 'good', 'mid', 'bad', 'overrated', 'underrated']
+    const allowed = ['masterpiece', 'fire', 'great', 'good', 'mid', 'bad', 'trash', 'overrated', 'underrated']
     if (req.body.reaction_type && !allowed.includes(req.body.reaction_type)) {
         errors.push(`reaction_type must be one of: ${allowed.join(', ')}`)
     }

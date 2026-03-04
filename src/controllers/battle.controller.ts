@@ -4,6 +4,46 @@ import { buildMeta } from '../utils/pagination.util'
 import { getServiceSupabase } from '../config/supabase.config'
 const supabase = getServiceSupabase()
 
+const KITSU_BASE = 'https://kitsu.io/api/edge'
+
+/** Fetch the poster image URL for an anime name from Kitsu */
+async function fetchKitsuPoster(name: string): Promise<string> {
+  try {
+    const url = `${KITSU_BASE}/anime?filter[text]=${encodeURIComponent(name)}&page[limit]=1`
+    const res = await fetch(url, { headers: { Accept: 'application/vnd.api+json' } })
+    if (!res.ok) return ''
+    const json: any = await res.json()
+    const attrs = json?.data?.[0]?.attributes
+    if (!attrs) return ''
+    return (
+      attrs.posterImage?.large ||
+      attrs.posterImage?.medium ||
+      attrs.posterImage?.small ||
+      ''
+    )
+  } catch {
+    return ''
+  }
+}
+
+/** Enrich a raw DB battle row with Kitsu images */
+async function enrichBattle(raw: any) {
+  const nameA: string = raw.anime_a_name ?? ''
+  const nameB: string = raw.anime_b_name ?? ''
+
+  // Fetch both images in parallel
+  const [imageA, imageB] = await Promise.all([
+    nameA ? fetchKitsuPoster(nameA) : Promise.resolve(''),
+    nameB ? fetchKitsuPoster(nameB) : Promise.resolve(''),
+  ])
+
+  return {
+    ...raw,
+    animeA: { name: nameA, image: imageA },
+    animeB: { name: nameB, image: imageB },
+  }
+}
+
 /**
  * GET /api/v1/battles
  */
@@ -15,13 +55,18 @@ export async function getBattles(req: Request, res: Response, next: NextFunction
 
     const { data, error, count } = await supabase
       .from('battles')
-      .select('*, anime_a_rel:anime!battles_anime_a_fkey(*), anime_b_rel:anime!battles_anime_b_fkey(*)', { count: 'exact' })
+      .select('id, anime_a_name, anime_b_name, round, status, winner, created_at', { count: 'exact' })
+      .not('anime_a_name', 'is', null)
       .order('round', { ascending: true })
       .order('created_at', { ascending: true })
       .range(offset, offset + limit - 1)
 
     if (error) throw error
-    return response.success(res, data || [], buildMeta(count || 0, page, limit))
+
+    // Enrich all battles with Kitsu images in parallel
+    const enriched = await Promise.all((data || []).map(enrichBattle))
+
+    return response.success(res, enriched, buildMeta(count || 0, page, limit))
   } catch (err) {
     return next(err)
   }
@@ -32,11 +77,11 @@ export async function getBattles(req: Request, res: Response, next: NextFunction
  */
 export async function createBattle(req: Request, res: Response, next: NextFunction) {
   try {
-    const { anime_a, anime_b } = req.body
+    const { anime_a_name, anime_b_name, round } = req.body
 
     const { data, error } = await supabase
       .from('battles')
-      .insert({ anime_a, anime_b })
+      .insert({ anime_a_name, anime_b_name, round: round ?? 1, status: 'active' })
       .select()
       .single()
 
@@ -55,14 +100,19 @@ export async function getBattleDetails(req: Request, res: Response, next: NextFu
     const { id } = req.params
     const userId = req.user?.id
 
-    // Fetch battle with anime details
     const { data: battle, error } = await supabase
       .from('battles')
-      .select('*, anime_a_rel:anime!battles_anime_a_fkey(*), anime_b_rel:anime!battles_anime_b_fkey(*)')
+      .select('id, anime_a_name, anime_b_name, round, status, winner, created_at')
       .eq('id', id)
       .single()
 
     if (error || !battle) return response.failure(res, 404, 'not_found', 'Battle not found')
+
+    // Fetch images from Kitsu
+    const [imageA, imageB] = await Promise.all([
+      battle.anime_a_name ? fetchKitsuPoster(battle.anime_a_name) : Promise.resolve(''),
+      battle.anime_b_name ? fetchKitsuPoster(battle.anime_b_name) : Promise.resolve(''),
+    ])
 
     // Fetch vote counts
     const { data: votes } = await supabase
@@ -88,6 +138,8 @@ export async function getBattleDetails(req: Request, res: Response, next: NextFu
 
     return response.success(res, {
       ...battle,
+      animeA: { name: battle.anime_a_name, image: imageA },
+      animeB: { name: battle.anime_b_name, image: imageB },
       votes: {
         A: votesA,
         B: votesB,
@@ -142,7 +194,6 @@ export async function getMyVotes(req: Request, res: Response, next: NextFunction
 
     if (error) throw error
 
-    // Shape: { "battle-uuid-1": "A", "battle-uuid-2": "B", ... }
     const votesMap: Record<string, string> = {}
     for (const row of data || []) {
       votesMap[row.battle_id] = row.vote_for
