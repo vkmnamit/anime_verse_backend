@@ -82,11 +82,12 @@ export function validateWatchlist(req: Request): string[] {
 
 export function validateProfileUpdate(req: Request): string[] {
     const errors: string[] = []
-    if (!req.body.bio && !req.body.avatar_url && !req.body.username) {
-        errors.push('At least one field (bio, avatar_url, username) is required')
+    const { bio, avatar_url, banner_url, username, display_name, genres, twitter, instagram, facebook } = req.body
+    if (!bio && !avatar_url && !banner_url && !username && !display_name && !genres && !twitter && !instagram && !facebook) {
+        errors.push('At least one field is required to update profile')
     }
-    if (req.body.bio && req.body.bio.length > 300) errors.push('bio must be 300 characters or less')
-    if (req.body.username && req.body.username.length < 3) errors.push('username must be at least 3 characters')
+    if (bio && bio.length > 300) errors.push('bio must be 300 characters or less')
+    if (username && username.length < 3) errors.push('username must be at least 3 characters')
     return errors
 }
 
