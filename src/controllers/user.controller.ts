@@ -52,9 +52,10 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
         const userId = req.user?.id
         if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
 
-        const { username, avatar_url, banner_url, bio, genres, twitter, instagram, facebook } = req.body
+        const { username, display_name, avatar_url, banner_url, bio, genres, twitter, instagram, facebook } = req.body
         const updates: Record<string, any> = {}
         if (username !== undefined) updates.username = username
+        if (display_name !== undefined) updates.display_name = display_name
         if (avatar_url !== undefined) updates.avatar_url = avatar_url
         if (banner_url !== undefined) updates.banner_url = banner_url
         if (bio !== undefined) updates.bio = bio
@@ -65,7 +66,8 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
 
         const { data, error } = await supabase
             .from('profiles')
-            .upsert({ id: userId, ...updates }, { onConflict: 'id' })
+            .update(updates)
+            .eq('id', userId)
             .select()
             .single()
 

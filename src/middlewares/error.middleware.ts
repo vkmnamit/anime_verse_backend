@@ -32,9 +32,17 @@ export function errorMiddleware(err: any, req: Request, res: Response, next: Nex
     }
 
     // Supabase / Postgres errors
-    if (err.code && typeof err.code === 'string' && err.code.startsWith('P')) {
-        console.error('[error.middleware] Database error:', err)
-        return response.failure(res, 500, 'database_error', 'A database error occurred')
+    if (err.code && typeof err.code === 'string') {
+        // Unique violation, ForeignKey violation, etc.
+        if (err.code.startsWith('23')) {
+            console.warn('[error.middleware] Constraint violation:', err.message)
+            return response.failure(res, 400, 'database_constraint', err.message || 'Database constraint violation')
+        }
+        // General Postgres/PostgREST error
+        if (err.code.startsWith('P')) {
+            console.error('[error.middleware] Database error:', err)
+            return response.failure(res, 500, 'database_error', 'A database error occurred')
+        }
     }
 
     // Fallback — never leak internals
