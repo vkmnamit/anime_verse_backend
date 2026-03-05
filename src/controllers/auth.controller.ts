@@ -183,12 +183,17 @@ export async function getMe(req: Request, res: Response, next: NextFunction) {
       .single()
 
     if (!profile) {
-      const fallbackName = user.user_metadata?.username || user.email?.split('@')[0] || `user_${user.id.substring(0, 6)}`;
+      const fallbackName = user.user_metadata?.username ||
+        user.user_metadata?.full_name?.replace(/\s+/g, '_').toLowerCase() ||
+        user.email?.split('@')[0] ||
+        `user_${user.id.substring(0, 6)}`;
+      const googleAvatar = user.user_metadata?.avatar_url || null;
       await db.from('profiles').upsert({
         id: user.id,
         username: fallbackName,
+        avatar_url: googleAvatar,
       }, { onConflict: 'id' });
-      profile = { username: fallbackName, avatar_url: null, bio: null, genres: [], created_at: user.created_at };
+      profile = { username: fallbackName, avatar_url: googleAvatar, bio: null, genres: [], created_at: user.created_at };
     }
 
     return response.success(res, {
