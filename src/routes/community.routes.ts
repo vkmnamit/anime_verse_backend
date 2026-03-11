@@ -13,4 +13,7 @@ router.get('/:slug', CommunityController.getCommunityBySlug)
 // Membership
 router.post('/:slug/join', authMiddleware, CommunityController.toggleMembership)
 
+// Settings
+router.patch('/:id', authMiddleware, CommunityController.updateCommunity)
+
 export default router

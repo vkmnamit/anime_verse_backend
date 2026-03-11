@@ -12,7 +12,7 @@ export async function createCommunity(req: Request, res: Response, next: NextFun
         const userId = req.user?.id
         if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
 
-        const { name, description } = req.body
+        const { name, description, avatar_url, banner_url } = req.body
 
         if (!name || name.trim().length === 0) {
             return response.failure(res, 400, 'validation', 'Community name is required')
@@ -39,6 +39,8 @@ export async function createCommunity(req: Request, res: Response, next: NextFun
                 name: name.trim(),
                 slug,
                 description: description?.trim() || `Welcome to ${slug}!`,
+                avatar_url: avatar_url || null,
+                banner_url: banner_url || null,
                 member_count: 1,
                 created_by: userId,
             })
@@ -194,6 +196,55 @@ export async function getMyJoinedCommunities(req: Request, res: Response, next: 
         if (error) throw error
         const slugs = data.map((d: any) => d.communities?.slug).filter(Boolean)
         return response.success(res, slugs)
+    } catch (err) {
+        return next(err)
+    }
+}
+
+/**
+ * PATCH /api/v1/community/:id
+ * Update community details (admin/creator only)
+ */
+export async function updateCommunity(req: Request, res: Response, next: NextFunction) {
+    try {
+        const userId = req.user?.id
+        if (!userId) return response.failure(res, 401, 'unauthorized', 'Login required')
+
+        const { id } = req.params
+        const { name, description, avatar_url, banner_url } = req.body
+
+        // Check if community exists and requester is the creator
+        const { data: community, error: fetchErr } = await supabase
+            .from('communities')
+            .select('created_by')
+            .eq('id', id)
+            .single()
+
+        if (fetchErr || !community) {
+            return response.failure(res, 404, 'not_found', 'Community not found')
+        }
+
+        if (community.created_by !== userId) {
+            return response.failure(res, 403, 'forbidden', 'Only the creator can edit this community')
+        }
+
+        const updates: any = {}
+        if (name !== undefined) updates.name = name
+        if (description !== undefined) updates.description = description
+        if (avatar_url !== undefined) updates.avatar_url = avatar_url
+        if (banner_url !== undefined) updates.banner_url = banner_url
+        updates.updated_at = new Date()
+
+        const { data: updated, error: updateErr } = await supabase
+            .from('communities')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single()
+
+        if (updateErr) throw updateErr
+
+        return response.success(res, updated)
     } catch (err) {
         return next(err)
     }
